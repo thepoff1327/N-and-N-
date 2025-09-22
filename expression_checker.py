@@ -2,21 +2,20 @@
 """
 Expression Set Checker - Multilingual Mathematical Analysis Tool
 ================================================================
-
 This program analyzes mathematical expressions and constants to determine:
 - Set membership (N or N*)
 - Even/Odd patterns (2*K vs 2*K+1)
 - Prime number analysis
 - Complete mathematical analysis
-
 Supports English, French, and Arabic languages.
+Enhanced with support for multiple variables (a-z) and square notation (²)
 
 Requirements:
 - sympy (pip install sympy)
 - translations.json file in the same directory
 
 Author: Thepoff1327
-Version: 2.0
+Version: 2.1 (Enhanced)
 """
 
 import sympy as sp
@@ -26,6 +25,7 @@ import math
 import json
 import os
 import sys
+import string
 
 def load_translations():
     """Load translations from JSON file"""
@@ -73,8 +73,101 @@ def choose_language(texts):
         except Exception:
             print(get_text('invalid_choice', 'en', texts))
 
+def preprocess_expression(expression_input):
+    """
+    Enhanced preprocessing to handle multiple variables and square notation
+    """
+    # Handle square notation (²) 
+    expression_input = expression_input.replace('²', '**2')
+    
+    # Clean up the input - replace implicit multiplication
+    # Handle cases like 2n, 3a, 5x -> 2*n, 3*a, 5*x
+    expression_input = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', expression_input)
+    # Handle cases like n2, a3, x5 -> n*2, a*3, x*5
+    expression_input = re.sub(r'([a-zA-Z])(\d)', r'\1*\2', expression_input)
+    
+    # Handle parentheses multiplication like n(x+1) -> n*(x+1)
+    expression_input = re.sub(r'([a-zA-Z])\(', r'\1*(', expression_input)
+    expression_input = re.sub(r'\)([a-zA-Z])', r')*\1', expression_input)
+    
+    # Handle variable-to-variable multiplication like nx, ab, xy -> n*x, a*b, x*y
+    expression_input = re.sub(r'([a-zA-Z])([a-zA-Z])', r'\1*\2', expression_input)
+    
+    return expression_input
+
+def find_variables(expr):
+    """
+    Find all variables in the expression
+    """
+    # Get all free symbols (variables) from the expression
+    variables = list(expr.free_symbols)
+    # Sort them alphabetically for consistency
+    variables.sort(key=str)
+    return variables
+
+def get_primary_variable(variables, lang, texts):
+    """
+    Let user choose which variable to analyze (for multi-variable expressions)
+    """
+    if len(variables) == 1:
+        return variables[0]
+    
+    print(f"\n🔍 Multiple variables found: {[str(v) for v in variables]}")
+    print("Which variable would you like to analyze as the main variable?")
+    
+    for i, var in enumerate(variables, 1):
+        print(f"{i}. {var}")
+    
+    while True:
+        try:
+            choice = input(f"Enter choice (1-{len(variables)}): ").strip()
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(variables):
+                return variables[choice_idx]
+            else:
+                print(f"Please enter a number between 1 and {len(variables)}")
+        except ValueError:
+            print("Please enter a valid number")
+        except KeyboardInterrupt:
+            print(f"\n\n{get_text('interrupted', lang, texts)}")
+            sys.exit(0)
+
+def get_other_variable_values(variables, primary_var, lang, texts):
+    """
+    Get fixed values for other variables when analyzing multi-variable expressions
+    """
+    other_vars = [v for v in variables if v != primary_var]
+    if not other_vars:
+        return {}
+    
+    print(f"\n📝 For analysis, we need fixed values for other variables:")
+    var_values = {}
+    
+    for var in other_vars:
+        while True:
+            try:
+                value_input = input(f"Enter value for {var} (or press Enter for {var}=1): ").strip()
+                if value_input == "":
+                    var_values[var] = 1
+                    print(f"   Using {var} = 1")
+                    break
+                else:
+                    value = float(value_input)
+                    if value == int(value):
+                        value = int(value)
+                    var_values[var] = value
+                    print(f"   Using {var} = {value}")
+                    break
+            except ValueError:
+                print("Please enter a valid number")
+            except KeyboardInterrupt:
+                print(f"\n\n{get_text('interrupted', lang, texts)}")
+                sys.exit(0)
+    
+    return var_values
+
 def analyze_constant(value, set_choice, lang, texts):
-    """Analyze a constant value (no 'n' variable)"""
+    """Analyze a constant value (no variables)"""
     
     print(f"\n{get_text('constant_analysis', lang, texts)}")
     print("-" * 30)
@@ -132,60 +225,67 @@ def analyze_constant(value, set_choice, lang, texts):
         print(f"  {value} {get_text('non_integer', lang, texts)}")
         print(f"  {get_text('prime_na_non_integer', lang, texts)}")
 
-def analyze_expression(expr, set_choice, n, lang, texts):
-    """Analyze the expression symbolically"""
+def analyze_expression(expr, set_choice, primary_var, var_values, lang, texts):
+    """Analyze the expression symbolically with support for multiple variables"""
     
     print(f"\n{get_text('symbolic_analysis', lang, texts)}")
     print("-" * 30)
     
-    # Expand and simplify the expression
-    expanded = expand(expr)
-    simplified = simplify(expr)
+    # Substitute fixed values for other variables
+    working_expr = expr
+    if var_values:
+        print(f"🔧 Substituting fixed values: {var_values}")
+        working_expr = expr.subs(var_values)
+        print(f"Expression with substitutions: {working_expr}")
     
-    print(get_text('original', lang, texts).format(expr))
+    # Expand and simplify the expression
+    expanded = expand(working_expr)
+    simplified = simplify(working_expr)
+    
+    print(get_text('original', lang, texts).format(working_expr))
     print(get_text('expanded', lang, texts).format(expanded))
     print(get_text('simplified', lang, texts).format(simplified))
     
-    # Check if expression is always positive for valid n values
+    # Check if expression is always positive for valid primary variable values
     print(f"\n{get_text('set_membership', lang, texts)}")
     
-    min_n = 1 if set_choice == 'N*' else 0
+    min_val = 1 if set_choice == 'N*' else 0
     
     # Test a few values to get insight
     test_vals = []
     problematic_vals = []
     
-    for test_n in range(min_n, min_n + 10):
+    for test_val in range(min_val, min_val + 10):
         try:
-            result = float(expr.subs(n, test_n))
-            test_vals.append((test_n, result))
+            result = float(working_expr.subs(primary_var, test_val))
+            test_vals.append((test_val, result))
             
             # Check if result belongs to the chosen set
             if set_choice == 'N' and result < 0:
-                problematic_vals.append((test_n, result))
+                problematic_vals.append((test_val, result))
             elif set_choice == 'N*' and result <= 0:
-                problematic_vals.append((test_n, result))
+                problematic_vals.append((test_val, result))
                 
         except Exception as e:
-            print(get_text('could_not_evaluate', lang, texts).format(test_n, e))
+            print(get_text('could_not_evaluate', lang, texts).format(test_val, e))
     
     # Display results for test values
     print(f"\n{get_text('sample_evaluations', lang, texts)}")
-    for test_n, result in test_vals[:5]:
+    for test_val, result in test_vals[:5]:
         belongs = "✅" if ((set_choice == 'N' and result >= 0) or (set_choice == 'N*' and result > 0)) else "❌"
-        print(f"  n = {test_n}: {expr} = {result} {belongs}")
+        print(f"  {primary_var} = {test_val}: {working_expr} = {result} {belongs}")
     
     if problematic_vals:
         print(f"\n{get_text('found_problems', lang, texts).format(set_choice)}")
-        for test_n, result in problematic_vals:
-            print(f"  n = {test_n}: result = {result}")
+        for test_val, result in problematic_vals:
+            print(f"  {primary_var} = {test_val}: result = {result}")
     else:
         print(f"\n{get_text('appears_to_belong', lang, texts).format(set_choice)}")
     
     # Even/Odd analysis
-    analyze_parity(expr, n, min_n, lang, texts)
+    analyze_parity(working_expr, primary_var, min_val, lang, texts)
 
-def analyze_parity(expr, n, min_n, lang, texts):
+def analyze_parity(expr, primary_var, min_val, lang, texts):
     """Analyze if the expression results in even (2*K) or odd (2*K+1) numbers"""
     
     print(f"\n{get_text('parity_analysis', lang, texts)}")
@@ -196,9 +296,9 @@ def analyze_parity(expr, n, min_n, lang, texts):
     odd_count = 0
     parity_pattern = []
     
-    for test_n in range(min_n, min_n + 10):
+    for test_val in range(min_val, min_val + 10):
         try:
-            result = float(expr.subs(n, test_n))
+            result = float(expr.subs(primary_var, test_val))
             if result == int(result):
                 result = int(result)
             
@@ -215,7 +315,7 @@ def analyze_parity(expr, n, min_n, lang, texts):
                     parity_type = get_text('odd', lang, texts)
                     k_value = (int(result) - 1) // 2
                 
-                print(f"  n = {test_n}: {result} = {parity_type}, K = {k_value}")
+                print(f"  {primary_var} = {test_val}: {result} = {parity_type}, K = {k_value}")
                 
                 # Add prime checking for integer results
                 if int(result) > 1 and int(result) <= 1000:
@@ -224,10 +324,10 @@ def analyze_parity(expr, n, min_n, lang, texts):
                     else:
                         print(f"    └─ {get_text('composite', lang, texts).format(result)}")
             else:
-                print(f"  n = {test_n}: {result} {get_text('non_integer', lang, texts)}")
+                print(f"  {primary_var} = {test_val}: {result} {get_text('non_integer', lang, texts)}")
                 
         except Exception as e:
-            print(f"  n = {test_n}: Error - {e}")
+            print(f"  {primary_var} = {test_val}: Error - {e}")
     
     # Analyze pattern
     print(f"\n{get_text('pattern_summary', lang, texts)}")
@@ -257,38 +357,45 @@ def analyze_parity(expr, n, min_n, lang, texts):
     except Exception as e:
         print(get_text('could_not_determine', lang, texts).format(e))
 
-def test_specific_values(expr, set_choice, n, lang, texts):
-    """Allow user to test specific values of n"""
+def test_specific_values(expr, set_choice, primary_var, var_values, lang, texts):
+    """Allow user to test specific values of the primary variable"""
     
     print(f"\n{get_text('specific_testing', lang, texts)}")
     print("-" * 30)
     
-    min_n = 1 if set_choice == 'N*' else 0
-    print(get_text('note_range', lang, texts).format(set_choice, min_n))
+    min_val = 1 if set_choice == 'N*' else 0
+    print(f"📝 Testing values for variable '{primary_var}' (range: {primary_var} ≥ {min_val})")
+    
+    if var_values:
+        print(f"🔧 Other variables fixed at: {var_values}")
     
     done_words = {'en': 'done', 'fr': 'fini', 'ar': 'انتهى'}
     
     while True:
         try:
-            n_input = input(f"\n{get_text('enter_n_value', lang, texts)}").strip()
+            val_input = input(f"\nEnter value for {primary_var} (or '{done_words[lang]}' to finish): ").strip()
             
-            if n_input.lower() == done_words[lang]:
+            if val_input.lower() == done_words[lang]:
                 break
             
-            n_value = float(n_input)
+            val_value = float(val_input)
             
-            # Check if n is valid for the chosen set
-            if set_choice == 'N*' and n_value < 1:
-                print(get_text('warning_not_in_set', lang, texts).format(n_value, set_choice, 1))
-            elif set_choice == 'N' and n_value < 0:
-                print(get_text('warning_not_in_set', lang, texts).format(n_value, set_choice, 0))
+            # Check if value is valid for the chosen set
+            if set_choice == 'N*' and val_value < 1:
+                print(f"⚠️  Warning: {val_value} is not in {set_choice} (requires ≥ 1)")
+            elif set_choice == 'N' and val_value < 0:
+                print(f"⚠️  Warning: {val_value} is not in {set_choice} (requires ≥ 0)")
+            
+            # Create substitution dictionary
+            subs_dict = var_values.copy() if var_values else {}
+            subs_dict[primary_var] = val_value
             
             # Evaluate expression
-            result = float(expr.subs(n, n_value))
+            result = float(expr.subs(subs_dict))
             if result == int(result):
                 result = int(result)
             
-            print(f"\n{get_text('result_for_n', lang, texts).format(n_value)}")
+            print(f"\n📊 Result for {primary_var} = {val_value}:")
             print(f"   {expr} = {result}")
             
             # Check set membership
@@ -299,42 +406,42 @@ def test_specific_values(expr, set_choice, n, lang, texts):
                 belongs = result > 0 and (isinstance(result, int) or result == int(result))
                 set_status = get_text('belongs_to_n_star', lang, texts) if belongs else get_text('not_belongs_to_n_star', lang, texts)
             
-            print(f"   {get_text('set_membership_result', lang, texts).format(set_status)}")
+            print(f"   Set membership: {set_status}")
             
             # Check parity if it's an integer
             if isinstance(result, (int, float)) and result == int(result):
                 result_int = int(result)
                 if result_int % 2 == 0:
                     k_val = result_int // 2
-                    print(f"   {get_text('parity_even', lang, texts).format(k_val)}")
+                    print(f"   Parity: Even (2×{k_val})")
                 else:
                     k_val = (result_int - 1) // 2
-                    print(f"   {get_text('parity_odd', lang, texts).format(k_val)}")
+                    print(f"   Parity: Odd (2×{k_val}+1)")
                 
                 # Check if it's prime
                 if result_int > 1:
                     is_prime = isprime(result_int)
                     if is_prime:
-                        print(f"   {get_text('prime_analysis', lang, texts).format(result_int)}")
-                        print(f"   {get_text('prime_divisors', lang, texts).format(result_int)}")
+                        print(f"   Prime Analysis: {result_int} is PRIME")
+                        print(f"   Divisors: 1, {result_int}")
                     else:
                         # Find divisors for composite numbers
                         divisors = get_divisors(result_int)
-                        print(f"   {get_text('composite_analysis', lang, texts).format(result_int)}")
-                        print(f"   {get_text('all_divisors', lang, texts).format(sorted(divisors))}")
+                        print(f"   Prime Analysis: {result_int} is COMPOSITE")
+                        print(f"   All divisors: {sorted(divisors)}")
                 elif result_int == 1:
-                    print(f"   {get_text('neither_prime', lang, texts)}")
-                    print(f"   {get_text('divisors_one', lang, texts)}")
+                    print(f"   Prime Analysis: 1 is neither prime nor composite")
+                    print(f"   Divisors: 1")
                 else:
-                    print(f"   {get_text('prime_na', lang, texts)}")
+                    print(f"   Prime Analysis: Not applicable for {result_int}")
             else:
-                print(f"   {get_text('parity_na', lang, texts)}")
-                print(f"   {get_text('prime_na_non_integer', lang, texts)}")
+                print(f"   Parity: Not applicable (non-integer)")
+                print(f"   Prime Analysis: Not applicable (non-integer)")
                 
         except ValueError:
-            print(get_text('enter_valid_number', lang, texts))
+            print("Please enter a valid number")
         except Exception as e:
-            print(get_text('error_evaluating', lang, texts).format(e))
+            print(f"Error evaluating expression: {e}")
 
 def get_divisors(n):
     """Get all divisors of a positive integer n"""
@@ -359,7 +466,9 @@ def main():
     
     print("\n" + get_text('welcome', lang, texts))
     print("=" * 50)
-    print(get_text('description', lang, texts) + "\n")
+    print(get_text('description', lang, texts))
+    print("✨ Enhanced with support for multiple variables (a-z) and square notation (²)")
+    print()
     
     # Step 1: Ask for N or N*
     while True:
@@ -371,32 +480,35 @@ def main():
     if set_choice == 'N':
         print(f"\n{get_text('chose_n', lang, texts)}")
         print(get_text('n_description', lang, texts))
-        valid_range = "n ≥ 0"
+        valid_range_template = "variable ≥ 0"
     else:
         print(f"\n{get_text('chose_n_star', lang, texts)}")
         print(get_text('n_star_description', lang, texts))
-        valid_range = "n ≥ 1"
+        valid_range_template = "variable ≥ 1"
     
     # Step 2: Get the expression
     while True:
         try:
+            print("\n📝 Expression Input Tips:")
+            print("  • Use any letters a-z as variables (e.g., 2x + 3y)")
+            print("  • Use ² for squares (e.g., x² + 2x)")
+            print("  • Multiplication: 2n, 3x, ab (automatically handled)")
+            print("  • Examples: n², 2x+1, a²+b², (x+1)²")
+            
             expression_input = input(f"\n{get_text('enter_expression', lang, texts)}").strip()
             
-            # Clean up the input - replace implicit multiplication and handle division
-            expression_input = expression_input.replace('n(', 'n*(')
-            expression_input = expression_input.replace(')n', ')*n')
-            # Handle cases like 25n -> 25*n
-            expression_input = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', expression_input)
-            expression_input = re.sub(r'([a-zA-Z])(\d)', r'\1*\2', expression_input)
+            # Enhanced preprocessing for multiple variables and squares
+            processed_input = preprocess_expression(expression_input)
+            print(f"🔧 Processed: {expression_input} → {processed_input}")
             
             # Parse the expression
-            n = symbols('n')
-            expr = sympify(expression_input)
+            expr = sympify(processed_input)
             
-            # Check if 'n' is in the expression
-            has_n = expr.has(n)
-            if not has_n:
-                print(get_text('no_n_variable', lang, texts))
+            # Find all variables in the expression
+            variables = find_variables(expr)
+            
+            if not variables:
+                print("🔢 No variables found - analyzing as constant")
                 # For constants, we'll analyze the single value
                 constant_value = float(expr)
                 if constant_value == int(constant_value):
@@ -404,32 +516,37 @@ def main():
                 analyze_constant(constant_value, set_choice, lang, texts)
                 print(f"\n{get_text('analysis_complete', lang, texts)}")
                 return
-                
+            
+            # Choose primary variable for analysis
+            primary_var = get_primary_variable(variables, lang, texts)
+            
+            # Get values for other variables if any
+            var_values = get_other_variable_values(variables, primary_var, lang, texts)
+            
             break
             
         except Exception as e:
-            print(get_text('invalid_expression', lang, texts).format(str(e)))
-            print(get_text('multiplication_tip', lang, texts))
+            print(f"❌ Invalid expression: {str(e)}")
+            print("💡 Make sure to use proper mathematical notation")
     
-    print(f"\n{get_text('expression_parsed', lang, texts).format(expr)}")
+    print(f"\n✅ Expression parsed successfully: {expr}")
+    print(f"📊 Primary variable for analysis: {primary_var}")
+    if var_values:
+        print(f"🔧 Fixed values: {var_values}")
     
-    # Use fallback for analyzing text if not in translations
-    analyzing_text = get_text('analyzing', lang, texts)
-    if '{}' in analyzing_text:
-        print(analyzing_text.format(valid_range))
-    else:
-        print(f"📊 Analyzing expression for {valid_range}...")
+    valid_range = valid_range_template.replace("variable", str(primary_var))
+    print(f"📈 Analyzing for {valid_range}...")
     
     # Step 3: Symbolic analysis
-    analyze_expression(expr, set_choice, n, lang, texts)
+    analyze_expression(expr, set_choice, primary_var, var_values, lang, texts)
     
-    # Step 4: Ask for specific n values to test
-    print(f"\n{get_text('test_specific', lang, texts)}")
+    # Step 4: Ask for specific values to test
+    print(f"\n🧪 Would you like to test specific values for {primary_var}?")
     yes_responses = {'en': 'y', 'fr': 'o', 'ar': 'ن'}
     test_values = input(get_text('yes_no', lang, texts)).strip().lower()
     
     if test_values == yes_responses[lang]:
-        test_specific_values(expr, set_choice, n, lang, texts)
+        test_specific_values(expr, set_choice, primary_var, var_values, lang, texts)
     
     print(f"\n{get_text('analysis_complete', lang, texts)}")
 
