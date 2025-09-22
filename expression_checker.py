@@ -15,7 +15,7 @@ Requirements:
 - sympy (pip install sympy)
 - translations.json file in the same directory
 
-Author: Assistant
+Author: Thepoff1327
 Version: 2.0
 """
 
